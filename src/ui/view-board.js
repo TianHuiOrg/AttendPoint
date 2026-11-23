@@ -46,10 +46,10 @@
               <div class="list-item" data-action="open-student" data-id="${s.id}" style="cursor:pointer">
                 <span class="rank-num rank-${lastRank}">${lastRank}</span>
                 <div class="grow">
-                  <b>${s.name}</b> <span class="faint">${App.teamName(s)}</span>
+                  <b class="board-name">${s.name}</b> <span class="faint">${App.teamName(s)}</span>
                   <div><span class="chip ${rank.cls}">${rank.title}</span> <span class="faint">出席 ${t.sessionIds.length} 堂</span></div>
                 </div>
-                <div class="num" style="text-align:right"><b style="font-size:18px;color:var(--theme)">${t.honor}</b><div class="faint">可用 ${t.balance}</div></div>
+                <div class="num" style="text-align:right"><b class="board-score">${t.honor}</b><div class="faint">可用 ${t.balance}</div></div>
               </div>`;
           }) : html`<div class="empty">這個班還沒有學員</div>`}
         </div>`;
@@ -106,7 +106,7 @@
                 const enough = bal >= gift.cost;
                 return html`
                   <div class="list-item">
-                    <div class="grow"><b>${s.name}</b> <span class="faint">${App.teamName(s)}</span></div>
+                    <div class="grow"><b class="board-name">${s.name}</b> <span class="faint">${App.teamName(s)}</span></div>
                     <span class="num ${enough ? '' : 'faint'}">可用 ${bal}</span>
                     <button type="button" class="btn btn-gift btn-sm" data-action="redeem" data-gift="${gift.id}" data-id="${s.id}" ${enough ? '' : 'disabled'}>兌換</button>
                   </div>`;

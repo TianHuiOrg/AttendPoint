@@ -86,7 +86,7 @@
               ${checked
                 ? html`<button type="button" class="btn btn-soft" disabled>✅ 已報到</button>`
                 : html`<button type="button" class="btn btn-ok" data-action="checkin" data-id="${s.id}">⏰ 報到</button>`}
-              <button type="button" class="btn btn-primary" data-action="open-student" data-id="${s.id}">＋ 加減分</button>
+              <button type="button" class="btn btn-soft" data-action="open-student" data-id="${s.id}">＋ 加減分</button>
             </div>`
           : checked ? html`<span class="chip chip-ok">✅ 本堂已報到</span>` : ''}
       </div>`;
