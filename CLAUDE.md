@@ -31,7 +31,7 @@
 - 階段 0–3 完成（資料層、權限、GAS 後端、網頁介面），另含調整 3-7 小隊選填、3-8 彈性常態上課時間。
 - 階段 4-1 壓力測試（`npm run stress`，見 `docs/stress-test.md`）、4-2 雲端只傳變動（`meta.syncId`、`AttendAuth.syncView`）、4-3 寫入安全（`_data`／`_data_2` 輪流寫入，`DATA_SHEET` 屬性切換）、4-4 備份清理（保留最新 `BACKUP_KEEP` 份，跨年度結算備份不刪）、4-5 瀏覽器自動化測試（`tests/e2e/`，`npm run e2e`）完成。
 - 階段 5-1 部署文件補充：部署帳號的選擇、先用個人帳號試行一個班再轉移到公用帳號（`docs/deploy-gas.md` 第 0、6 節）。
-- 階段 6 試行中（擁有者個人帳號、一個班）。6-1：點名／加分改送上課日期，課次在同一個操作中建立，第一次點名不必等後端。
+- 階段 6 試行中（6-28 起後台已轉移到佛堂公用帳號）。6-1：點名／加分改送上課日期，課次在同一個操作中建立，第一次點名不必等後端。
 - 6-2：改成與 CarTracker 相同的架構——網頁放 GitHub Pages（Actions 自動發布），Apps Script 只當後台（`doPost`），網頁比對後台版本指紋。
 - 6-3：服務人員在點名頁直接點名（`session.duty`，記入課次執勤 `dutyStaffIds`）。
 - 6-4：LOGO 由擁有者在「系統與備份」上傳，存在後台（`apiGetLogo`／`apiSetLogo`），不放進 repo。
