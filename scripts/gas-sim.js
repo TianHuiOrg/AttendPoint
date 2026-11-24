@@ -6,7 +6,9 @@
  *   npm run build && node scripts/gas-sim.js
  *   然後用本機伺服器開啟 dist/gas-sim.html（擁有者 PIN：OWNER_PIN 預設 246810）
  *
- * 資料只存在記憶體，重新整理頁面就會清空。每次呼叫延遲 300ms，模擬網路。
+ * 模擬的試算表與指令碼屬性在關閉頁面時存到這個瀏覽器的 localStorage（__gas_sim），重新整理後還在，
+ * 用來測試離線後重新開啟網頁；要清空請清除網站資料。每次呼叫延遲 300ms（window.__simDelay），模擬網路。
+ * 斷線：瀏覽器離線（navigator.onLine 為 false）或 window.__simOffline = true 時，呼叫後台會連線失敗。
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,14 +18,18 @@ const DIST = path.join(__dirname, '..', 'dist');
 const mocks = `
 <script>
 (function () {
+  const SIM_KEY = '__gas_sim';
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SIM_KEY) || 'null'); } catch (e) {}
   const sheets = {};
-  const props = { OWNER_PIN: '246810', OWNER_NAME: '模擬堂主' };
-  const cache = {};
-  function sheet(name) {
-    let cells = [];
+  const props = saved ? saved.props : { OWNER_PIN: '246810', OWNER_NAME: '模擬堂主' };
+  const cache = saved ? saved.cache : {};
+  function sheet(name, initial) {
+    let cells = initial || [];
     return {
       getName: function () { return name; },
       getLastRow: function () { return cells.length; },
+      cells: function () { return cells; },
       clearContents: function () { cells = []; },
       clear: function () { cells = []; },
       hideSheet: function () {},
@@ -43,7 +49,13 @@ const mocks = `
     getSheets: function () { return Object.keys(sheets).map(function (n) { return sheets[n]; }); },
     deleteSheet: function (sh) { delete sheets[sh.getName()]; }
   };
+  if (saved) Object.keys(saved.sheets).forEach(function (n) { sheets[n] = sheet(n, saved.sheets[n]); });
   window.__simSheets = sheets;
+  window.addEventListener('pagehide', function () {
+    const out = {};
+    Object.keys(sheets).forEach(function (n) { out[n] = sheets[n].cells(); });
+    try { localStorage.setItem(SIM_KEY, JSON.stringify({ sheets: out, props: props, cache: cache })); } catch (e) {}
+  });
   window.SpreadsheetApp = { getActiveSpreadsheet: function () { return ss; }, openById: function () { return ss; }, flush: function () {}, getUi: function () { throw new Error('no ui'); } };
   window.PropertiesService = { getScriptProperties: function () { return {
     getProperty: function (k) { return k in props ? props[k] : null; },
@@ -85,11 +97,14 @@ const mocks = `
   window.fetch = function (url, opts) {
     if (url !== SIM_URL) return realFetch.apply(this, arguments);
     const body = opts.body;
-    return new Promise(function (resolve) {
+    if (navigator.onLine === false || window.__simOffline) return Promise.reject(new TypeError('Failed to fetch'));
+    return new Promise(function (resolve, reject) {
       setTimeout(function () {
+        // 等待途中斷線：請求沒有送到後台
+        if (window.__simOffline) return reject(new TypeError('Failed to fetch'));
         const text = doPost({ postData: { contents: body } }).getContent();
         resolve({ ok: true, status: 200, json: function () { return Promise.resolve(JSON.parse(text)); } });
-      }, 300);
+      }, window.__simDelay || 300);
     });
   };
 })();

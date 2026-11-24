@@ -1,4 +1,4 @@
-// 雲端版（dist/gas-sim.html 模擬 Google Apps Script）：權限、帳號、多裝置同步、寫入失敗、登入逾時
+// 雲端版（dist/gas-sim.html 模擬 Google Apps Script）：權限、帳號、多裝置同步、寫入失敗、登入逾時（離線操作見 offline.e2e.js）
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { SKIP, launch, idle, dialog, modal, toast, tab, card, login } = require('./helpers.js');
@@ -338,6 +338,12 @@ test('雲端版', { skip: SKIP }, async (t) => {
     await page.locator('#modeBanner', { hasText: '訪客模式' }).waitFor();
     assert.equal(await page.evaluate(() => readState_().logs.some((l) => l.reason.indexOf('秩序良好') !== -1)), false);
     assert.equal(await modal(page).count(), 0);
+    // 沒送出的團體加分留在手機；重新登入後自動上傳
+    await page.locator('#netBar', { hasText: '有 1 筆尚未上傳：請重新登入' }).waitFor();
+    await login(page, '135790', '壇務甲');
+    await page.waitForFunction(() => App.pendingCount() === 0);
+    await idle(page);
+    assert.equal(await page.evaluate(() => readState_().logs.some((l) => l.reason.indexOf('秩序良好') !== -1)), true);
   });
 
   await t.test('後台版本不同時提示擁有者更新；後台設定錯誤時提示原因', async () => {

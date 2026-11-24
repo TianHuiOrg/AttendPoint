@@ -25,7 +25,8 @@ function startServer() {
       res.end();
       return;
     }
-    res.writeHead(200, { 'Content-Type': file.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream' });
+    const type = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': type });
     fs.createReadStream(file).pipe(res);
   });
   return new Promise((resolve) => {
