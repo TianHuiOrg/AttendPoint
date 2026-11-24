@@ -32,6 +32,10 @@ const MAX_FAILS = 5;
 const FAIL_WINDOW = 15 * 60;
 const OWNER_ID = 'U-owner';
 const BATCH_MAX = 30; // 一次合併送出的操作上限
+// 網頁離線暫存的操作帶有 clientId；記住最近成功的編號，網路不穩重送時不會重複加分（見 dedupeOps_）
+const APPLIED_OPS = 'APPLIED_OPS';
+const APPLIED_KEEP = 400;
+const CLIENT_ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
 // 後台程式版本：npm run build 時換成 store／auth／migrate-v2／Code 的指紋，
 // 網頁比對不同時會提示擁有者更新 Apps Script
 const BACKEND_VERSION = '@BACKEND_VERSION@';
@@ -425,15 +429,42 @@ function apiApply(token, op, since) {
     const user = requireUser_(token);
     return withLock_(function () {
       const state = readState_();
+      const applied = appliedOps_();
+      const cid = clientIdOf_(op);
+      if (cid && applied.indexOf(cid) !== -1) {
+        return Object.assign({ result: { duplicate: true }, backup: null }, AttendAuth.syncView(state, user, since));
+      }
       const now = nowIso_();
       AttendAuth.authorize(state, op, user, now.slice(0, 10));
       let backup = null;
       if (op.type === 'year.reset') backup = backup_(state, YEAR_RESET_LABEL);
       const r = AttendStore.apply(state, op, { now: function () { return nowIso_(); }, operatorId: user.id, operatorName: user.name });
       writeState_(r.state);
+      if (cid) rememberOps_(applied, [cid]);
       return Object.assign({ result: r.result, backup: backup }, AttendAuth.syncView(r.state, user, since));
     });
   });
+}
+
+/** 網頁離線暫存的操作編號（沒有或格式不對時為 null） */
+function clientIdOf_(op) {
+  const id = op && op.clientId;
+  return typeof id === 'string' && CLIENT_ID_RE.test(id) ? id : null;
+}
+
+/** 最近成功執行過的操作編號（存在 Script Properties，最多 APPLIED_KEEP 筆） */
+function appliedOps_() {
+  try {
+    const list = JSON.parse(props_().getProperty(APPLIED_OPS) || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function rememberOps_(applied, ids) {
+  if (!ids.length) return;
+  props_().setProperty(APPLIED_OPS, JSON.stringify(applied.concat(ids).slice(-APPLIED_KEEP)));
 }
 
 /**
@@ -450,14 +481,20 @@ function apiApplyBatch(token, ops, since) {
       let state = readState_();
       const today = nowIso_().slice(0, 10);
       const ctx = { now: function () { return nowIso_(); }, operatorId: user.id, operatorName: user.name };
+      const applied = appliedOps_();
+      const done = [];
       let changed = false;
       const results = ops.map(function (op) {
+        const cid = clientIdOf_(op);
+        // 上次送出時其實已經寫入（網頁等太久當成失敗而重送）：不再執行一次
+        if (cid && (applied.indexOf(cid) !== -1 || done.indexOf(cid) !== -1)) return { ok: true, result: { duplicate: true }, backup: null };
         try {
           AttendAuth.authorize(state, op, user, today);
           const backup = op.type === 'year.reset' ? backup_(state, YEAR_RESET_LABEL) : null;
           const r = AttendStore.apply(state, op, ctx);
           state = r.state;
           changed = true;
+          if (cid) done.push(cid);
           return { ok: true, result: r.result, backup: backup };
         } catch (e) {
           if (e && e.code) return { ok: false, code: e.code, message: e.message };
@@ -466,6 +503,7 @@ function apiApplyBatch(token, ops, since) {
         }
       });
       if (changed) writeState_(state);
+      rememberOps_(applied, done);
       return Object.assign({ results: results }, AttendAuth.syncView(state, user, since));
     });
   });

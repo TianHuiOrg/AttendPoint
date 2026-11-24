@@ -125,6 +125,39 @@ test('合併送出：一次讀寫試算表，失敗的操作不影響其他操�
   assert.equal(ok(g.apiApplyBatch(staff, [null], null)).results[0].ok, false);
 });
 
+test('離線暫存的操作重送時不重複執行（clientId）', () => {
+  const { g, owner, staff, classId, props } = setup();
+  const sid = ok(g.apiApply(staff, { type: 'student.create', classId, teamId: null, name: '王小明' })).result.id;
+  const date = '2026-10-24';
+  const award = { type: 'points.award', studentId: sid, date, points: 3, reason: '幫忙', clientId: 'cidAward01' };
+  const checkin = { type: 'points.checkin', studentId: sid, date, clientId: 'cidCheck01' };
+  const first = ok(g.apiApplyBatch(staff, [checkin, award], null));
+  assert.deepEqual(first.results.map((r) => r.ok), [true, true]);
+  // 網頁等太久以為失敗、再送一次：兩筆都回報成功，但不會再加一次分、也不會說已經報到過
+  const again = ok(g.apiApplyBatch(staff, [checkin, award, Object.assign({}, award, { clientId: 'cidAward02' })], null));
+  assert.deepEqual(again.results.map((r) => r.ok), [true, true, true]);
+  assert.equal(again.results[0].result.duplicate, true);
+  assert.equal(again.results[1].result.duplicate, true);
+  // 單筆送出也一樣
+  assert.equal(ok(g.apiApply(staff, award, null)).result.duplicate, true);
+  const logs = ok(g.apiGetState(owner)).state.logs;
+  assert.equal(logs.filter((l) => l.reason === '幫忙').length, 2);
+  assert.equal(logs.filter((l) => l.type === 'checkin').length, 1);
+  // 同一批裡重複的編號只執行一次；格式不對的編號視為沒有編號
+  ok(g.apiApplyBatch(staff, [Object.assign({}, award, { clientId: 'cidAward03' }), Object.assign({}, award, { clientId: 'cidAward03' })], null));
+  ok(g.apiApplyBatch(staff, [Object.assign({}, award, { clientId: 'x' }), Object.assign({}, award, { clientId: 'x' })], null));
+  assert.equal(ok(g.apiGetState(owner)).state.logs.filter((l) => l.reason === '幫忙').length, 5);
+  // 被擋下的操作不記錄編號；記錄只保留最近 400 筆
+  fail(g.apiApply(staff, { type: 'student.delete', id: sid, clientId: 'cidDelete1' }, null), 'FORBIDDEN');
+  assert.equal(JSON.parse(props.APPLIED_OPS).includes('cidDelete1'), false);
+  const many = JSON.parse(props.APPLIED_OPS).concat(Array.from({ length: 450 }, (_, i) => 'old' + String(i).padStart(4, '0')));
+  props.APPLIED_OPS = JSON.stringify(many);
+  ok(g.apiApply(staff, Object.assign({}, award, { clientId: 'cidAward04' }), null));
+  const kept = JSON.parse(props.APPLIED_OPS);
+  assert.equal(kept.length, 400);
+  assert.equal(kept[kept.length - 1], 'cidAward04');
+});
+
 test('登入清單只有名稱與角色，不含 PIN 資訊', () => {
   const { g } = setup();
   const res = ok(g.apiLoginOptions());
