@@ -4,7 +4,7 @@
 
 | | 放在哪裡 | 更新方式 |
 |---|---|---|
-| **網頁**（畫面、點名操作） | GitHub Pages，例如 `https://jim0954.github.io/AttendPoint/` | 推送到 `main` 後自動更新（GitHub Actions「發布網頁」） |
+| **網頁**（畫面、點名操作） | GitHub Pages，例如 `https://tianhuiorg.github.io/AttendPoint/` | 推送到 `main` 後自動更新（GitHub Actions「發布網頁」） |
 | **後台**（讀寫資料、權限檢查） | Google Apps Script，資料存在部署者的 Google 試算表 | 後台程式改變時，擁有者用 `clasp push` 更新並發布新版本 |
 
 網頁會檢查後台版本：後台需要更新時，畫面上方會顯示「⚠️ 後台程式需要更新」，平常不用特別記。
@@ -101,7 +101,7 @@ Apps Script 編輯器 → 左側「專案設定」（齒輪）→ 最下方「�
 1. **開啟 Pages**（只要做一次）：GitHub 上的 AttendPoint →「Settings → Pages」→ Source 選「**GitHub Actions**」。
 2. **填入後台網址**：在 GitHub 上打開 `src/config.js` → 按鉛筆（編輯）→ 把 `GAS_URL: ''` 改成剛才的網址，例如 `GAS_URL: 'https://script.google.com/macros/s/xxxx/exec'` →「Commit changes」。
 3. **等待發布**：到「Actions」分頁，「發布網頁」跑完（約 1–2 分鐘，綠色勾勾）就完成了。
-4. **打開網頁**：`https://<GitHub 帳號>.github.io/<repo 名稱>/`，例如 `https://jim0954.github.io/AttendPoint/`。把網址分享在佛堂群組，建議大家加到手機主畫面。
+4. **打開網頁**：`https://<GitHub 帳號或組織>.github.io/<repo 名稱>/`，例如 `https://tianhuiorg.github.io/AttendPoint/`。把網址分享在佛堂群組，建議大家加到手機主畫面。
 5. 用擁有者登入（PIN 是 `OWNER_PIN`），到「👑 擁有者 → 帳號管理」為每位服務人員建立壇務帳號。
    - 要放佛堂 LOGO 的話：「👑 擁有者 → 🛠️ 系統與備份 → 🖼️ LOGO → 上傳圖片」。圖片會縮成 180×180，存在試算表隱藏的 `_logo` 工作表，**不會放進 GitHub**；標題、瀏覽器分頁與手機主畫面圖示都會使用。
 6. 如果之前用過 v2 單機版：在 v2 電腦的瀏覽器中按 F12 → Console 輸入 `copy(localStorage.temple_checkin_annual_v2)`，再到「擁有者 → 系統與備份 → 匯入資料」貼上，會自動轉換。
