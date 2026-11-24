@@ -131,6 +131,7 @@
       if (e.target === wrap || e.target.closest('[data-close]')) close();
     });
     if (opts.onMount) opts.onMount(wrap.querySelector('.modal'), close);
+    if (App.markNetwork) App.markNetwork(wrap);
     const first = wrap.querySelector('[autofocus]');
     if (first) setTimeout(function () { first.focus(); }, 30);
     return close;

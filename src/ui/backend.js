@@ -37,6 +37,10 @@
   GasBackend.prototype.call = function (name) {
     const args = Array.prototype.slice.call(arguments, 1);
     const config = window.ATTENDPOINT_CONFIG;
+    // 手機明確沒有網路：不必等連線逾時
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return Promise.reject(new BackendError('OFFLINE', '目前沒有網路'));
+    }
     return fetch(config.GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -50,6 +54,7 @@
     }, function () {
       throw new BackendError('NETWORK', '連線失敗，請檢查網路後再試');
     }).then(function (res) {
+      if (App.reconnected) App.reconnected(); // 離線狀態解除
       // 後台程式版本與網頁不同：提示擁有者更新 Apps Script
       const outdated = res.backendVersion !== config.BACKEND_VERSION;
       if (outdated !== App.s.backendOutdated) {
@@ -101,6 +106,12 @@
     delete res.delta;
     delete res.unchanged;
     return res;
+  };
+
+  /** 離線開啟：以手機上存的資料當成上次後端確認的版本，連上後只下載變動 */
+  GasBackend.prototype.restore = function (state, view) {
+    this.base = view ? state : null;
+    this.baseView = view || null;
   };
 
   GasBackend.prototype.setToken = function (token) {

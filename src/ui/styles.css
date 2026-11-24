@@ -69,6 +69,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar .btn:hover { background: rgba(255,255,255,.08); }
 .mode-banner { font-size: 12.5px; padding: 4px 16px; text-align: center; background: var(--lintel-2); color: #dfe6e1; }
 .mode-banner:empty { display: none; }
+/* 離線狀態列：離線中／尚未上傳／上傳被退回 */
+.net-bar:empty { display: none; }
+.net-row { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 6px 16px; font-size: 13.5px; font-weight: 600; }
+.net-offline { background: #3b3f45; color: #f2f2ee; }
+.net-sync { background: var(--ok-soft); color: var(--ok); }
+.net-warn { background: var(--warn-soft); color: var(--warn); }
+.net-row .btn { padding: 4px 12px; font-size: 13px; color: inherit; background: rgba(255,255,255,.85); border-color: currentColor; }
+.net-offline .btn { background: transparent; }
+#mountainBtn[aria-pressed="true"] { background: #3b3f45; color: #fff; }
+.needs-net { opacity: .45; }
+.conflict-list .list-item { align-items: flex-start; flex-direction: column; gap: 2px; }
 
 /* ---------- 按鈕 ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--card); font-weight: 600; font-size: 14px; cursor: pointer; transition: background .15s, transform .05s; white-space: nowrap; }

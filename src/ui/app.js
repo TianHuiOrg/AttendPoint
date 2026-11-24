@@ -69,101 +69,272 @@
   // 後端回應後以後端資料為準，失敗時退回並提示。
   // 會建立新資料（需要後端給的 id）的操作則等後端回應後才更新畫面。
   // 雲端版每次讀寫試算表要好幾秒：送出時把排隊中的操作合併成一次送出（apiApplyBatch）。
-  const OPTIMISTIC = ['points.checkin', 'points.award', 'points.batch', 'points.redeem', 'session.duty'];
-  const queue = [];
+  //
+  // 離線（雲端版，見 offline.js）：加減分類操作同時存在手機（attendpoint_outbox）。
+  // 送不出去、等太久或開啟山上模式時，操作留在手機（deferred），網路恢復後每 30 筆合併上傳；
+  // 上傳時被後台擋下的項目記在「上傳被退回」明細，不會默默消失。
+  const Off = window.AttendOffline;
+  const queue = []; // { op, optimistic, clientId, label, at, userId, userName, deferred, local, resolve, reject }
   let confirmed = null; // 最後一次後端確認的資料
   let sending = false;
-  const BATCH_MAX = 30; // 與後台 Code.js 相同
+  let sendGen = 0; // 等太久而放棄的請求晚回來時不採用
+  App.SEND_TIMEOUT_MS = Off.SEND_TIMEOUT_MS;
+  App.s.offline = false; // 自動判斷：連不上後台
+  App.s.conflicts = [];
+
+  function cloud() { return !!App.s.backend && App.s.backend.mode === 'gas'; }
+  function storage() { try { return window.localStorage; } catch (e) { return null; } }
+
+  /** 雲端版：山上模式或連不上後台 */
+  App.isOffline = function () { return cloud() && (!!App.prefs.mountain || App.s.offline); };
+  App.pendingCount = function () { return queue.filter(function (i) { return i.optimistic; }).length; };
 
   function localApply(state, op) {
     AttendAuth.authorize(state, op, App.s.user, App.today());
     return AttendStore.apply(state, op, { operatorId: App.s.user && App.s.user.id, operatorName: App.s.user && App.s.user.name });
   }
 
+  function persist() {
+    if (!cloud()) return;
+    const ok = Off.saveOutbox(storage(), queue.filter(function (i) { return i.optimistic; }));
+    if (!ok) App.toast('⚠️ 手機儲存空間不足，尚未上傳的資料無法保存，請盡快連上網路上傳', 'warn');
+  }
+
+  /** 把最後一次後台確認的資料存在手機，離線開啟時使用 */
+  function saveCache() {
+    if (!cloud() || !confirmed) return;
+    const b = App.s.backend;
+    Off.saveCache(storage(), {
+      state: confirmed,
+      view: b.base === confirmed ? b.baseView : null,
+      user: App.s.user,
+      savedAt: AttendStore.localIso(new Date())
+    });
+  }
+
   function replayPending() {
     let state = confirmed || App.s.data;
     queue.forEach(function (item) {
       if (!item.optimistic) return;
-      try { state = localApply(state, item.op).state; } catch (e) { /* 已不適用的操作略過，後端會回報 */ }
+      // 只是顯示用：登入逾時（訪客）時也照樣顯示尚未上傳的分數
+      try { state = AttendStore.apply(state, item.op, { operatorId: item.userId, operatorName: item.userName }).state; } catch (e) { /* 已不適用的操作略過，後端會回報 */ }
     });
     App.s.data = state;
   }
 
+  function refreshPending() {
+    App.s.pending = queue.length;
+    replayPending();
+    App.render();
+  }
+
+  function addConflicts(list) {
+    if (!list.length) return;
+    App.s.conflicts = App.s.conflicts.concat(list);
+    Off.saveConflicts(storage(), App.s.conflicts);
+    App.toast('⚠️ 有 ' + list.length + ' 筆上傳被後台退回，請查看明細', 'warn');
+  }
+
+  /** 操作改成留在手機：呼叫端照常完成（用本機結果） */
+  function defer(item) {
+    if (item.deferred) return;
+    item.deferred = true;
+    item.resolve({ result: item.local, state: App.s.data, offline: true });
+  }
+
+  function remove(items) {
+    items.forEach(function (item) {
+      const i = queue.indexOf(item);
+      if (i !== -1) queue.splice(i, 1);
+    });
+  }
+
+  App.needsNetworkText = function () {
+    return '📴 需要網路：' + (App.prefs.mountain ? '山上模式不連線（關閉山上模式後再試）' : '目前離線（按 ↻ 重新連線）') + '，離線時只能點名、加減分與兌換';
+  };
+
+  /** 後台有回應：離線狀態解除，開始上傳 */
+  App.reconnected = function () {
+    if (!App.s.offline) return;
+    App.s.offline = false;
+    App.render();
+    if (App.pendingCount()) {
+      App.toast('📶 已恢復連線，開始上傳');
+      setTimeout(App.flush, 0);
+    }
+  };
+
+  App.setOffline = function (on) {
+    on = !!on;
+    if (App.s.offline === on) return;
+    App.s.offline = on;
+    if (on && App.pendingCount()) App.toast('📴 網路不穩，已改為離線暫存，恢復連線後會自動上傳', 'warn');
+    App.render();
+  };
+
   function pump() {
     if (sending || queue.length === 0) return;
+    if (cloud() && (App.isOffline() || !App.s.user)) {
+      // 不能連線：需要後台的操作直接退回；加減分類留在手機
+      const blocked = queue.filter(function (i) { return !i.optimistic; });
+      queue.forEach(function (i) { if (i.optimistic) defer(i); });
+      if (blocked.length) {
+        remove(blocked);
+        const err = new App.BackendError('OFFLINE', App.s.user ? '需要網路：目前離線，請連上網路後再試' : '請先登入壇務帳號');
+        blocked.forEach(function (i) { i.reject(err); });
+        App.handleError(err);
+      }
+      refreshPending();
+      return;
+    }
     sending = true;
+    const gen = ++sendGen;
     // 後台版本較舊時沒有合併送出，改回一次一個
     const canBatch = App.s.backend.applyBatch && !App.s.backendOutdated;
-    const items = queue.slice(0, canBatch ? BATCH_MAX : 1);
-    function settle() {
-      queue.splice(0, items.length);
+    const items = queue.slice(0, canBatch ? Off.BATCH_MAX : 1);
+    const ops = items.map(function (item) {
+      return cloud() && item.clientId ? Object.assign({}, item.op, { clientId: item.clientId }) : item.op;
+    });
+    function finish() {
       sending = false;
       App.s.pending = queue.length;
       if (queue.length === 0 && confirmed) App.s.data = confirmed;
       else replayPending();
       App.render();
     }
+    function guard(fn) {
+      return function (v) { if (gen === sendGen) fn(v); };
+    }
     function failAll(err) {
-      settle();
-      items.forEach(function (item) { item.reject(err); });
+      sendGen++;
+      if (cloud() && (Off.isNetworkError(err) || err.code === 'SESSION_EXPIRED')) {
+        // 送不出去、等太久、登入逾時：加減分類留在手機，之後再傳
+        const kept = items.filter(function (i) { return i.optimistic; });
+        const dropped = items.filter(function (i) { return !i.optimistic; });
+        remove(dropped);
+        kept.forEach(defer);
+        persist();
+        if (err.code === 'SESSION_EXPIRED') {
+          App.s.backend.setToken(null);
+          App.toast('⚠️ 登入已逾時，請重新登入' + (App.pendingCount() ? '；尚未上傳的 ' + App.pendingCount() + ' 筆會保留，登入後自動上傳' : ''), 'warn');
+          App.setUser(null);
+          finish();
+          dropped.forEach(function (i) { i.reject(err); });
+          App.refresh(true);
+          return;
+        }
+        App.s.offline = true;
+        finish();
+        dropped.forEach(function (i) { i.reject(err); });
+        App.toast(kept.length ? '📴 網路不穩，已改為離線暫存，恢復連線後會自動上傳' : '⚠️ ' + err.message, 'warn');
+        return;
+      }
+      // 其他錯誤：剛做的操作退回；之前留在手機的保留，之後再試
+      const rejected = items.filter(function (i) { return !i.deferred; });
+      remove(rejected);
+      persist();
+      finish();
+      rejected.forEach(function (item) { item.reject(err); });
       App.handleError(err);
-      pump();
+      if (rejected.length) pump();
     }
-    // 先更新畫面資料再通知呼叫端，呼叫端拿到結果時就能看到新資料
-    if (items.length === 1) {
-      App.s.backend.apply(items[0].op).then(function (res) {
-        confirmed = res.state;
-        settle();
-        items[0].resolve(res);
-        pump();
-      }, failAll);
-      return;
-    }
-    App.s.backend.applyBatch(items.map(function (item) { return item.op; })).then(function (res) {
+    function accepted(res, results) {
       confirmed = res.state;
-      settle();
-      // 個別失敗的操作（例如別台已經點過名）只退回那一個，其他照常成功
-      res.results.forEach(function (r, i) {
+      App.s.offline = false;
+      remove(items);
+      persist();
+      saveCache();
+      finish();
+      const conflicts = [];
+      results.forEach(function (r, i) {
+        const item = items[i];
         if (r.ok) {
-          items[i].resolve({ result: r.result, backup: r.backup, state: res.state });
+          item.resolve({ result: r.result, backup: r.backup, state: res.state });
         } else {
-          items[i].reject(r);
-          App.handleError(r);
+          item.reject(r);
+          if (item.deferred) conflicts.push(Off.conflictOf(item, r, AttendStore.localIso(new Date())));
+          else App.handleError(r);
         }
       });
+      addConflicts(conflicts);
       pump();
-    }, failAll);
+    }
+    let call;
+    if (items.length === 1) {
+      call = App.s.backend.apply(ops[0]).then(function (res) {
+        return { res: res, results: [{ ok: true, result: res.result, backup: res.backup }] };
+      }, function (err) {
+        // 單筆被後台擋下（例如已經點過名）：與合併送出時相同處理
+        if (err && err.code && !Off.isNetworkError(err) && ['SESSION_EXPIRED', 'SERVER_ERROR', 'BUSY', 'BAD_RESPONSE', 'NOT_CONFIGURED'].indexOf(err.code) === -1 && confirmed) {
+          return { res: { state: App.s.backend.base || confirmed }, results: [{ ok: false, code: err.code, message: err.message }] };
+        }
+        throw err;
+      });
+    } else {
+      call = App.s.backend.applyBatch(ops).then(function (res) { return { res: res, results: res.results }; });
+    }
+    if (cloud()) {
+      call = Off.withTimeout(call, App.SEND_TIMEOUT_MS, function () {
+        return new App.BackendError('TIMEOUT', '後台等太久沒有回應');
+      });
+    }
+    call.then(guard(function (r) { accepted(r.res, r.results); }), guard(failAll));
   }
 
   /**
    * 執行資料操作。成功時 Promise 帶著後端結果 { result, state } 完成。
    * 失敗時已經顯示提示，Promise 不會完成也不會 reject，呼叫端只要寫成功後要做的事。
    * 回傳的 Promise 有 accepted 屬性：true 表示已通過本機檢查（加減分類操作已經顯示在畫面上）。
+   * 離線時加減分類操作存在手機，Promise 以本機結果完成（offline: true）；其他操作提示「需要網路」。
    */
   function never() { return new Promise(function () {}); }
+  function stalled() {
+    const p = never();
+    p.accepted = false;
+    return p;
+  }
 
   App.run = function (op) {
-    const optimistic = OPTIMISTIC.indexOf(op.type) !== -1;
+    const optimistic = Off.isOptimistic(op);
+    if (!optimistic && App.isOffline()) {
+      App.busyUntil(Promise.resolve()); // 從表單送出時不要讓按鈕一直停用
+      App.toast(App.needsNetworkText(), 'warn');
+      return stalled();
+    }
+    let local = null;
     if (optimistic) {
       try {
-        App.s.data = localApply(App.s.data, op).state;
+        const r = localApply(App.s.data, op);
+        App.s.data = r.state;
+        local = r.result;
       } catch (e) {
         App.handleError(e);
-        const stalled = never();
-        stalled.accepted = false;
-        return stalled;
+        return stalled();
       }
     }
     let settle;
     const settled = new Promise(function (r) { settle = r; });
+    let item;
     const p = new Promise(function (resolve, reject) {
-      queue.push({
+      item = {
         op: op,
         optimistic: optimistic,
+        local: local,
         resolve: function (v) { resolve(v); settle(); },
         reject: function (e) { reject(e); settle(); }
-      });
+      };
     }).then(null, never);
+    if (optimistic && cloud()) {
+      Object.assign(item, {
+        clientId: Off.newClientId(),
+        label: Off.describeOp(App.s.data, op),
+        at: AttendStore.localIso(new Date()),
+        userId: App.s.user && App.s.user.id,
+        userName: App.s.user && App.s.user.name
+      });
+    }
+    queue.push(item);
+    persist();
     App.busyUntil(settled); // 從表單送出時，按鈕停用到後台回應
     p.accepted = true;
     App.s.pending = queue.length;
@@ -172,19 +343,57 @@
     return p;
   };
 
-  App.isBusy = function () { return queue.length > 0; };
+  /** 有操作正在送出或等著送出（留在手機的不算） */
+  App.isBusy = function () {
+    return sending || queue.some(function (i) { return !i.deferred; });
+  };
 
-  // 還有操作沒送到後台時，關閉或重新整理網頁要先提醒（沒送出的會遺失）
+  /** 立即上傳留在手機的操作（網路恢復、按「立即上傳」、重新登入後） */
+  App.flush = function () {
+    pump();
+  };
+
+  // 還有操作沒上傳時，關閉或重新整理網頁要先提醒（雲端版存在手機，下次開啟會再上傳）
   window.addEventListener('beforeunload', function (e) {
-    if (!App.isBusy()) return;
+    if (!queue.length) return;
     e.preventDefault();
-    e.returnValue = '還有資料沒同步完成';
+    e.returnValue = '還有資料尚未上傳';
   });
 
-  /** 以後端資料為準重設畫面資料（初始化、重新整理、匯入後使用） */
+  /** 以後端資料為準重設畫面資料（初始化、重新整理、匯入後使用）；留在手機的操作照樣顯示 */
   App.loadData = function (state) {
     confirmed = state;
     App.s.data = state;
+    if (queue.length) replayPending();
+    saveCache();
+  };
+
+  /**
+   * 雲端版開啟時：先用手機上的資料與未上傳佇列顯示畫面（不必等後台，離線也能用）。
+   * 回傳有沒有手機上的資料。
+   */
+  App.restoreOffline = function () {
+    if (!cloud()) return false;
+    const st = storage();
+    App.s.conflicts = Off.loadConflicts(st);
+    Off.loadOutbox(st).forEach(function (entry) {
+      queue.push(Object.assign(entry, { optimistic: true, deferred: true, resolve: function () {}, reject: function () {} }));
+    });
+    const cache = Off.loadCache(st);
+    App.s.pending = queue.length;
+    if (!cache) {
+      if (queue.length) replayPending();
+      return false;
+    }
+    App.s.backend.restore(cache.state, cache.view);
+    confirmed = cache.state;
+    App.s.data = cache.state;
+    let token = null;
+    try { token = st.getItem('attendpoint_token'); } catch (e) {}
+    App.s.user = token ? cache.user || null : null;
+    App.s.cachedAt = cache.savedAt || '';
+    replayPending();
+    return true;
   };
 
   App.handleError = function (err) {
@@ -196,21 +405,36 @@
     }
   };
 
-  /** 從後端重新讀取 */
+  /** 從後端重新讀取（山上模式不連線；連上後台就自動上傳留在手機的操作） */
   App.refresh = function (silent) {
+    if (cloud() && App.prefs.mountain) {
+      if (!silent) App.toast('⛰️ 山上模式不連線；要更新資料請先關閉山上模式');
+      return Promise.resolve();
+    }
     if (App.isBusy()) return Promise.resolve();
+    // 等太久還沒回來：先標示離線（回來了再恢復）
+    const slow = cloud() ? setTimeout(function () { App.setOffline(true); }, App.SEND_TIMEOUT_MS) : null;
     return App.s.backend.getState().then(function (res) {
+      clearTimeout(slow);
+      App.reconnected();
       if (App.isBusy() || res.stale) return;
-      App.loadData(res.state);
       if (res.sessionExpired) {
         App.setUser(null);
-        App.toast('登入已逾時，請重新登入', 'warn');
+        App.toast('登入已逾時，請重新登入' + (App.pendingCount() ? '；尚未上傳的 ' + App.pendingCount() + ' 筆會保留，登入後自動上傳' : ''), 'warn');
       } else if ('user' in res) {
         App.s.user = res.user;
       }
+      App.loadData(res.state);
       App.render();
       if (!silent) App.toast('已更新為最新資料');
+      App.flush();
     }, function (err) {
+      clearTimeout(slow);
+      if (cloud() && Off.isNetworkError(err)) {
+        App.setOffline(true);
+        if (!silent) App.toast('📴 連不上後台，先顯示手機上的資料' + (App.s.cachedAt ? '（' + App.s.cachedAt.replace('T', ' ').slice(5, 16) + '）' : ''), 'warn');
+        return;
+      }
       if (!silent) App.handleError(err);
     });
   };
@@ -309,7 +533,60 @@
     if (App.s.backend.mode === 'local') banner.push('💻 單機版：資料只存在這台電腦的瀏覽器');
     if (App.s.backendOutdated) banner.unshift('⚠️ 後台程式需要更新：請擁有者依部署說明更新 Apps Script（npm run build → clasp push → 發布新版本）');
     App.$('#modeBanner').textContent = banner.join('　');
-    App.$('#syncStatus').textContent = App.s.pending ? '⏳ 同步中（' + App.s.pending + '）…' : '';
+    App.$('#syncStatus').textContent = App.isBusy() ? '⏳ 同步中（' + queue.filter(function (i) { return !i.deferred; }).length + '）…' : '';
+    const mountain = App.$('#mountainBtn');
+    mountain.hidden = !cloud();
+    mountain.setAttribute('aria-pressed', App.prefs.mountain ? 'true' : 'false');
+    renderNetBar();
+  }
+
+  function renderNetBar() {
+    if (!cloud()) return App.setHtml('#netBar', '');
+    const st = Off.statusBar({
+      mountain: !!App.prefs.mountain,
+      offline: App.s.offline,
+      pending: App.pendingCount(),
+      loggedIn: !!App.s.user,
+      sending: sending
+    });
+    const rows = [];
+    if (st) {
+      rows.push(App.html`<div class="net-row net-${st.tone}" data-net="${st.tone}"><span>${st.text}</span>${
+        st.button === 'flush' ? App.html`<button type="button" class="btn btn-sm" data-action="flush-outbox">立即上傳</button>`
+        : st.button === 'login' ? App.html`<button type="button" class="btn btn-sm" data-action="open-login">重新登入</button>` : ''}</div>`);
+    }
+    if (App.s.conflicts.length) {
+      rows.push(App.html`<div class="net-row net-warn" data-net="conflicts"><span>⚠️ 有 ${App.s.conflicts.length} 筆上傳被後台退回</span><button type="button" class="btn btn-sm" data-action="show-conflicts">查看明細</button></div>`);
+    }
+    App.setHtml('#netBar', rows);
+  }
+
+  /** 離線時把需要網路的按鈕標成停用的樣子（按下去會提示「需要網路」） */
+  App.markNetwork = function (root) {
+    const off = App.isOffline();
+    App.$$('[data-action]', root || document).forEach(function (el) {
+      const need = off && !Off.allowedOffline(el.dataset.action);
+      el.classList.toggle('needs-net', need);
+      if (need) el.setAttribute('title', '需要網路');
+      else if (el.getAttribute('title') === '需要網路') el.removeAttribute('title');
+    });
+  };
+
+  function openConflicts() {
+    App.modal({
+      title: '上傳被退回的項目',
+      render: function () {
+        const list = App.s.conflicts.slice().reverse();
+        return App.html`
+          <p class="muted" style="margin:0">這些操作在離線時存在手機，上傳時被後台擋下（例如另一台已經點過名、點數不足），沒有記入資料。請確認後視需要重新操作。</p>
+          <div class="card list conflict-list">
+            ${list.length ? list.map(function (c) {
+              return App.html`<div class="list-item"><b>${c.label}</b><span class="minus">${c.message}</span><span class="faint">操作時間 ${String(c.at).replace('T', ' ').slice(5, 16)}・退回時間 ${String(c.rejectedAt).replace('T', ' ').slice(5, 16)}</span></div>`;
+            }) : App.html`<div class="empty">沒有被退回的項目</div>`}
+          </div>`;
+      },
+      foot: App.html`<button type="button" class="btn" data-close>關閉</button><button type="button" class="btn btn-primary" data-action="clear-conflicts">已確認，清除明細</button>`
+    });
   }
 
   function renderClassBar() {
@@ -386,6 +663,7 @@
     if (!cls && needsClass) renderEmpty();
     else App.setHtml('#view', view.render());
     App.refreshModals();
+    App.markNetwork();
   };
 
   // ---------- 事件委派 ----------
@@ -396,7 +674,13 @@
     return function (e) {
       const el = e.target.closest('[' + attr + ']');
       if (!el || el.disabled) return;
-      const fn = App.actions[el.getAttribute(attr)];
+      const name = el.getAttribute(attr);
+      const fn = App.actions[name];
+      if (fn && attr === 'data-action' && App.isOffline() && !Off.allowedOffline(name)) {
+        e.preventDefault();
+        App.toast(App.needsNetworkText(), 'warn');
+        return;
+      }
       if (fn) {
         if (attr === 'data-action') e.preventDefault();
         fn(el, e);
@@ -429,6 +713,29 @@
       App.toast(App.prefs.sound ? '🔊 音效開啟' : '🔇 已靜音');
     },
     refresh: function () { App.refresh(); },
+    'toggle-mountain': function () {
+      App.prefs.mountain = !App.prefs.mountain;
+      App.savePrefs();
+      App.render();
+      if (App.prefs.mountain) {
+        App.toast('⛰️ 山上模式：不連線，點名加分先存在手機');
+      } else {
+        App.toast('📶 已關閉山上模式，連線中…');
+        App.refresh(true);
+      }
+    },
+    'flush-outbox': function () {
+      if (App.prefs.mountain) return App.toast('⛰️ 山上模式不連線；要上傳請先關閉山上模式');
+      if (App.s.offline) return App.refresh(false);
+      App.flush();
+    },
+    'show-conflicts': function () { openConflicts(); },
+    'clear-conflicts': function () {
+      App.s.conflicts = [];
+      Off.saveConflicts(storage(), []);
+      App.closeTopModal();
+      App.render();
+    },
     'open-login': function () {
       if (App.s.user) openUserMenu();
       else openLogin();
@@ -448,6 +755,7 @@
   }
 
   function openLogin() {
+    if (App.s.backend.mode === 'gas' && App.prefs.mountain) return App.toast('⛰️ 山上模式不連線；要登入請先關閉山上模式', 'warn');
     if (loginCache) {
       showLogin(loginCache);
       // 背景讀最新的帳號清單（例如剛新增的帳號），對話框還開著就更新選單
@@ -549,15 +857,26 @@
 
   App.actions.logout = function () {
     App.closeTopModal();
+    const n = App.pendingCount();
+    if (n) {
+      App.confirm(`還有 ${n} 筆尚未上傳。\n登出後資料仍保留在這支手機，要重新登入才會上傳。確定要登出嗎？`, { okLabel: '登出' }).then(function (yes) {
+        if (yes) logout();
+      });
+      return;
+    }
+    logout();
+  };
+
+  function logout() {
     // 先在畫面與記憶體遮蔽名字，不必等後台回應（網路慢或斷線時也不會留著完整名冊）
     App.setUser(null);
-    App.loadData(AttendAuth.viewFor(App.s.data, null));
+    App.loadData(AttendAuth.viewFor(confirmed || App.s.data, null));
     App.render();
     App.s.backend.logout().then(function () {
       App.toast('已登出，回到訪客模式');
       App.refresh(true);
     });
-  };
+  }
 
   App.actions['change-my-pin'] = function () {
     App.closeTopModal();
