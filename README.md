@@ -10,6 +10,7 @@
 - **學員名冊**：新增、編輯、換隊升班、CSV／Excel／LINE 貼上批次匯入、匯出報表
 - **班務管理**：動態班別、小隊、加扣分項目、常態上課時間、課次與執勤、服務人員護持統計
 - **三級權限**：訪客（唯讀、名字遮蔽）／壇務（不能刪除）／擁有者（全部），由後端檢查
+- **離線操作**：山上網路差時照樣點名加分，資料先存在手機，網路恢復後自動上傳（⛰️ 山上模式）
 - **兩種用法**：雲端版（GitHub Pages 網頁 + Google Apps Script 後台，多人共用）或單機版（一個 HTML 檔，資料存在瀏覽器）
 
 ## 使用方式
@@ -28,6 +29,7 @@ npm run build
 - [資料結構](docs/data-model.md)
 - [權限與帳號](docs/permissions.md)
 - [部署（GitHub Pages + Google Apps Script）](docs/deploy-gas.md)
+- [離線操作（山上模式）](docs/offline.md)
 - [壓力測試](docs/stress-test.md)
 
 ## 開發

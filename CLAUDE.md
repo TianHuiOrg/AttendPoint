@@ -21,6 +21,8 @@
 | `src/config.js` | 雲端版設定（後台網址 `GAS_URL`） |
 | `.github/workflows/pages.yml` | 推送到 `main` 時測試、建置、自動更新後台（`scripts/deploy-gas.js`），並發布網頁到 GitHub Pages |
 | `src/ui/` | 網頁介面（原生 JS，`App.html` 樣板自動跳脫） |
+| `src/ui/offline.js` | 離線規則（本機佇列、快取、衝突明細；Node 可測試），佇列流程在 `app.js` |
+| `src/ui/sw.js` | Service Worker 範本（建置時寫入版本指紋，產生 `dist/web/sw.js`） |
 | `scripts/build.js` | 產生 `dist/AttendPoint.html`（單機版）、`dist/web/`（GitHub Pages）與 `dist/gas/`（後台，含版本指紋） |
 | `docs/` | 資料結構、權限、部署說明 |
 
@@ -46,6 +48,7 @@
 - 6-12 提示訊息合併；6-13、6-14 服務人員各班護持堂數、每堂學員與服務人員的出席率與名單（`AttendStore.computeSessionAttendance`，網頁課次列表與「課次」報表工作表）。
 - 6-15：自動更新後台（GitHub Actions 以 Apps Script API 上傳、建立版本、更新現有部署作業；Secret 未設定時略過）。
   - 還沒設定 Secret 時，雲端工作階段也能直接更新後台：給使用者 clasp 的 OAuth 授權網址（`redirect_uri=http://localhost:8888`，權限只要 `script.projects`、`script.deployments`），使用者按「允許」後貼回 `localhost:8888/?code=…` 的網址，換成 refresh token 存在暫存區（不可進 repo），再以 `CLASPRC_JSON`／`GAS_SCRIPT_ID`／`GAS_DEPLOYMENT_ID`（部署作業 ID 就在 `src/config.js` 的網址裡）環境變數執行 `node scripts/deploy-gas.js`。版本比對與發布後的確認都用 Apps Script API（雲端環境連不到 `script.google.com` 也沒關係）。指令碼 ID 請使用者提供，不寫進 repo。
+- 6-31：離線操作（`docs/offline.md`）：Service Worker 快取網頁；最後讀到的資料（`attendpoint_cache`）與未上傳的加減分類操作（`attendpoint_outbox`）存在手機；送不出去或等超過 8 秒自動離線暫存，右上角 ⛰️ 山上模式直接暫存；恢復連線每 30 筆合併上傳；操作帶 `clientId`，後台記在 `APPLIED_OPS` 屬性避免重送重複記分；被退回的項目列出明細（`attendpoint_conflicts`）；登入過期時保留、重新登入後上傳；離線時需要後台的按鈕停用。`npm run gas-sim` 的模擬後台會存到 localStorage（`__gas_sim`），`window.__simOffline`／`__simDelay` 可模擬斷線與慢速；e2e 見 `tests/e2e/offline.e2e.js`。
 - 6-11：連續操作合併送出（`apiApplyBatch`，後台只讀寫試算表一次），還沒同步完成時關閉網頁先提醒。
 - 尚未部署到真正的 Google Apps Script 實測（階段 4 其餘測試、階段 5 GitHub 門面與部署、階段 6 佛堂試行）。
 - 根目錄 `AttendPoint.html` 是 v2 舊版，`tests/migrate-v2.test.js` 用它當移轉測試資料。
