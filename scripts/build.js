@@ -3,6 +3,7 @@
  * 產生可部署的檔案（npm run build）：
  *   dist/AttendPoint.html   單機版：一個檔案，瀏覽器直接開啟即可使用（資料存在瀏覽器）
  *   dist/web/index.html     雲端版網頁：放在 GitHub Pages，依 src/config.js 的 GAS_URL 連到後台
+ *   dist/web/sw.js          Service Worker：網頁存在手機，離線也能開啟（版本指紋＝網頁內容，改版時自動換新）
  *   dist/gas/               Google Apps Script 後台（clasp push 或手動複製）
  *
  * 兩份網頁內容相同，只差在設定。後台版本指紋同時寫進網頁與 dist/gas/Code.js，
@@ -18,7 +19,7 @@ const DIST = path.join(ROOT, 'dist');
 
 // 前端腳本載入順序：資料層 → 權限 → 移轉 → 介面
 const SHARED = ['store.js', 'auth.js', 'migrate-v2.js'];
-const UI = ['lib.js', 'sha256.js', 'backend.js', 'app.js', 'view-checkin.js', 'view-board.js', 'view-roster.js', 'view-manage.js', 'view-owner.js', 'main.js'];
+const UI = ['lib.js', 'sha256.js', 'offline.js', 'backend.js', 'app.js', 'view-checkin.js', 'view-board.js', 'view-roster.js', 'view-manage.js', 'view-owner.js', 'main.js'];
 const GAS_FILES = ['store.js', 'auth.js', 'migrate-v2.js', 'Code.js', 'appsscript.json'];
 const BACKEND_FILES = ['store.js', 'auth.js', 'migrate-v2.js', 'Code.js'];
 
@@ -63,6 +64,12 @@ function buildIndex(opts) {
   return out;
 }
 
+/** Service Worker：VERSION 換成網頁內容的指紋，網頁一改 sw.js 就不同，瀏覽器會安裝新版 */
+function buildServiceWorker(html) {
+  const version = crypto.createHash('sha256').update(html).digest('hex').slice(0, 12);
+  return read(path.join(SRC, 'ui', 'sw.js')).replace('@SW_VERSION@', version);
+}
+
 function main() {
   const local = buildIndex();
   const web = buildIndex({ cloud: true });
@@ -72,6 +79,9 @@ function main() {
   fs.mkdirSync(path.join(DIST, 'web'), { recursive: true });
   fs.writeFileSync(path.join(DIST, 'AttendPoint.html'), local);
   fs.writeFileSync(path.join(DIST, 'web', 'index.html'), web);
+  fs.writeFileSync(path.join(DIST, 'web', 'sw.js'), buildServiceWorker(web));
+  // 瀏覽器自動化測試（dist/gas-sim.html）用的同一份
+  fs.writeFileSync(path.join(DIST, 'sw.js'), buildServiceWorker(web));
   GAS_FILES.forEach((f) => {
     let code = read(path.join(SRC, f));
     if (f === 'Code.js') code = code.replace('@BACKEND_VERSION@', version);
@@ -85,4 +95,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { buildIndex, backendVersion };
+module.exports = { buildIndex, backendVersion, buildServiceWorker };

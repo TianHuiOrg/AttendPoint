@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { buildIndex } = require('../scripts/build.js');
+const { buildIndex, buildServiceWorker } = require('../scripts/build.js');
 
 test('建置：網頁內嵌所有程式', () => {
   const html = buildIndex();
@@ -44,4 +44,17 @@ test('src/config.js 的後台網址為空白，或是 Apps Script 網頁應用�
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8'), { window: win });
   const url = win.ATTENDPOINT_CONFIG.GAS_URL;
   assert.ok(url === '' || /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url), `網址格式不正確：${url}`);
+});
+
+test('建置：Service Worker 的版本指紋隨網頁內容改變（改版時手機會換新）', () => {
+  const web = buildIndex({ cloud: true });
+  const sw = buildServiceWorker(web);
+  assert.doesNotThrow(() => new vm.Script(sw));
+  const version = sw.match(/const VERSION = '([0-9a-f]{12})';/);
+  assert.ok(version, '沒有寫入版本');
+  assert.equal(buildServiceWorker(web), sw, '同樣內容指紋相同');
+  assert.notEqual(buildServiceWorker(web + ' '), sw, '內容不同指紋就不同');
+  // 網頁有註冊 sw.js，並內嵌離線模組
+  assert.ok(web.includes("register('sw.js')"));
+  assert.ok(web.includes('/* ui/offline.js */'));
 });
