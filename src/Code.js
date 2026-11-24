@@ -464,7 +464,10 @@ function appliedOps_() {
 
 function rememberOps_(applied, ids) {
   if (!ids.length) return;
-  props_().setProperty(APPLIED_OPS, JSON.stringify(applied.concat(ids).slice(-APPLIED_KEEP)));
+  let list = applied.concat(ids).slice(-APPLIED_KEEP);
+  // 單一屬性上限 9 KB：編號較長時再少留一些
+  while (list.length > 1 && JSON.stringify(list).length > 8000) list = list.slice(Math.ceil(list.length / 10));
+  props_().setProperty(APPLIED_OPS, JSON.stringify(list));
 }
 
 /**
