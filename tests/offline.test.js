@@ -102,6 +102,9 @@ test('最後讀到的資料存在本機；格式不對時當成沒有', () => {
   assert.equal(c.user.name, '壇務甲');
   storage.setItem(Off.KEYS.cache, JSON.stringify({ state: { meta: {} } }));
   assert.equal(Off.loadCache(storage), null);
+  // 存不下時網頁會清掉舊的那份（saveCache(null)），空間留給尚未上傳的操作
+  Off.saveCache(storage, null);
+  assert.equal(storage.getItem(Off.KEYS.cache), null);
   assert.equal(Off.loadCache(memoryStorage()), null);
 });
 

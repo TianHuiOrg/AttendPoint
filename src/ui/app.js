@@ -104,13 +104,20 @@
   function saveCache() {
     if (!cloud() || !confirmed) return;
     const b = App.s.backend;
-    Off.saveCache(storage(), {
+    const ok = Off.saveCache(storage(), {
       state: confirmed,
       view: b.base === confirmed ? b.baseView : null,
       user: App.s.user,
       savedAt: AttendStore.localIso(new Date())
     });
+    if (!ok) {
+      // 資料太大存不下：清掉舊的那份，空間留給尚未上傳的操作
+      Off.saveCache(storage(), null);
+      if (!cacheWarned) App.toast('⚠️ 手機瀏覽器空間不足，無法存下完整資料；離線開啟時可能看不到名冊', 'warn');
+      cacheWarned = true;
+    }
   }
+  let cacheWarned = false;
 
   function replayPending() {
     let state = confirmed || App.s.data;
@@ -273,7 +280,9 @@
     } else {
       call = App.s.backend.applyBatch(ops).then(function (res) { return { res: res, results: res.results }; });
     }
-    if (cloud()) {
+    // 等太久就改成離線暫存：只限可以安全重送的加減分類操作（帶 clientId，後台不會重複執行）；
+    // 新增學員等其他操作照舊等後台回應，避免以為失敗又按一次而新增兩筆
+    if (cloud() && items.every(function (i) { return i.optimistic; })) {
       call = Off.withTimeout(call, App.SEND_TIMEOUT_MS, function () {
         return new App.BackendError('TIMEOUT', '後台等太久沒有回應');
       });
